@@ -27,6 +27,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.concurrent.*;
+import java.util.function.Supplier;
 
 public class Consumer {
 
@@ -36,30 +37,30 @@ public class Consumer {
     private static final int NUMBER_OF_THREADS = 8;
     private static final int MAX_POLL_RECORDS = 5;
     private static final Duration POLL_DURATION = Duration.ofMillis(250);
-    private static boolean running = true;
 
     public static void main(String[] args) {
         final ExecutorService threadPool = Executors.newFixedThreadPool(NUMBER_OF_THREADS);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Shutting down");
             threadPool.shutdown();
-            running = false;
             try {
-                threadPool.awaitTermination(5, TimeUnit.SECONDS);
+                threadPool.awaitTermination(MAX_POLL_RECORDS * CONSUMER_SLEEP_DURATION + 1000, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }));
         for (int i = 0; i < NUMBER_OF_THREADS; i++) {
-            threadPool.submit(new WorkerThread(i));
+            threadPool.submit(new WorkerThread(i, () -> !threadPool.isShutdown()));
         }
     }
 
     private static class WorkerThread implements Runnable {
         private final int id;
         private final KafkaConsumer<Long, String> consumer;
-        public WorkerThread(int id) {
+        private final Supplier<Boolean> isRunning;
+        public WorkerThread(int id, Supplier<Boolean> isRunning) {
             this.id = id;
+            this.isRunning = isRunning;
             Properties props = new Properties();
             props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_BROKERS);
             props.put(ConsumerConfig.CLIENT_ID_CONFIG, "consumer" + id);
@@ -72,7 +73,7 @@ public class Consumer {
         public void run() {
             System.out.printf("Worker Thread %d started%n", id);
             consumer.subscribe(List.of(KAFKA_TOPIC));
-            while (running) {
+            while (isRunning.get()) {
                 ConsumerRecords<Long, String> records = consumer.poll(POLL_DURATION);
                 if (records.isEmpty()) {
                     continue;

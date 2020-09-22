@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 public class Producer {
 
@@ -35,30 +36,29 @@ public class Producer {
     private static final int PRODUCER_SLEEP_DURATION = 1000;
     private static final int NUMBER_OF_THREADS = 4;
 
-    private static boolean running = true;
-
     public static void main(String[] args) {
         final ExecutorService threadPool = Executors.newFixedThreadPool(NUMBER_OF_THREADS);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Shutting down");
             threadPool.shutdown();
-            running = false;
             try {
-                threadPool.awaitTermination(5, TimeUnit.SECONDS);
+                threadPool.awaitTermination(PRODUCER_SLEEP_DURATION + 1000, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }));
         for (int i = 0; i < NUMBER_OF_THREADS; i++) {
-            threadPool.submit(new WorkerThread(i));
+            threadPool.submit(new WorkerThread(i, () -> !threadPool.isShutdown()));
         }
     }
 
     private static class WorkerThread implements Runnable {
         private final int id;
         private final KafkaProducer<Long, String> producer;
-        public WorkerThread(int id) {
+        private final Supplier<Boolean> isRunning;
+        public WorkerThread(int id, Supplier<Boolean> isRunning) {
             this.id = id;
+            this.isRunning = isRunning;
             Properties props = new Properties();
             props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_BROKERS);
             props.put(ProducerConfig.CLIENT_ID_CONFIG, "producer" + id);
@@ -68,7 +68,7 @@ public class Producer {
         }
         public void run() {
             System.out.printf("Worker Thread %d started%n", id);
-            while (running) {
+            while (isRunning.get()) {
                 try {
                     // Simulate some amount of time elapsing while generating the data to produce
                     Thread.sleep(PRODUCER_SLEEP_DURATION);
